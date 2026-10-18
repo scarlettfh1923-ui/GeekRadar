@@ -1,0 +1,31 @@
+# Build outputs
+build/
+.gradle/
+.kotlin/
+captures/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Local SDK / IDE
+local.properties
+.idea/
+*.iml
+.DS_Store
+
+# Signing (never commit)
+*.jks
+*.p12
+*.keystore
+keystore.properties
+signing/
+
+# Test / mock logs
+*.log
+tools/mock_requests.log
+app/build/
+
+# Misc
+*.hprof
+.cxx/

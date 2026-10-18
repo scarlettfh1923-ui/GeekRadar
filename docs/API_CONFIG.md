@@ -1,0 +1,18 @@
+# API 配置说明
+
+位置：设置 → 模型与 API。
+
+| 项目 | 默认值 | 说明 |
+|---|---|---|
+| API Key | 空 | 在 platform.deepseek.com 创建。只用 EncryptedSharedPreferences（AES-256-GCM，主密钥在 Android Keystore）保存在本机，不写日志、不随备份导出。 |
+| 模型 | `deepseek-flash` | 依据 2026-10 DeepSeek 官方文档：`deepseek-flash`（V4.1 Flash）为当前推荐名，`deepseek-v4-pro` 为 Pro；`deepseek-chat`/`deepseek-reasoner` 已于 2026-07-24 停用。可随时改名，无需升级 APK。 |
+| Base URL | `https://api.deepseek.com` | 请求 `{BaseURL}/chat/completions`（OpenAI 兼容格式）；连接测试请求 `{BaseURL}/models` 并校验模型名。可填第三方兼容接口，但不保证完全兼容。 |
+
+## 错误提示
+未填 Key / Key 无效（401/403）/ 余额不足（402）/ 限流（429）/ 模型名错误（400/404 含 model）/ 服务繁忙（5xx）/ 超时（读 180s、总 240s）/ DNS 或无网络 / 返回非 JSON / 输出为空，均显示分类 + 接口返回的原始 message。
+
+## 发送内容
+仅在点击「生成」时发送：系统消息 = 当前提示词 + 固定安全约束；用户消息 = 风格长度、网页标题描述、用户附言、带编号的链接清单（最多 150 条）、正文（默认截断至 12000 字，可调）。处理页底部会显示本次将发送的内容摘要。
+
+## 备用读取通道（Jina Reader）
+设置 → 网页读取，默认开启。本机抓取失败或正文 < 200 字时请求 `https://r.jina.ai/<原始URL>`。开启后该链接会经过 Jina AI 的服务器；私密链接请关闭。免费匿名调用有频率限制，可能失败，失败后走「粘贴原文」补救。

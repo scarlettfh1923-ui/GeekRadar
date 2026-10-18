@@ -1,0 +1,8 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- 雷达：同心圆 + 扫描扇区 + 目标点（占位图标） -->
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="3" android:fillColor="#00000000" android:pathData="M54,30a24,24 0,1 1,0 48a24,24 0,1 1,0 -48z"/>
+    <path android:strokeColor="#BFD0FF" android:strokeWidth="2.5" android:fillColor="#00000000" android:pathData="M54,42a12,12 0,1 1,0 24a12,12 0,1 1,0 -24z"/>
+    <path android:fillColor="#66FFFFFF" android:pathData="M54,54L54,30A24,24 0,0 1,75 42Z"/>
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="3" android:strokeLineCap="round" android:pathData="M54,54L71,37"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M66,46a3,3 0,1 1,0 6a3,3 0,1 1,0 -6z"/>
+</vector>
