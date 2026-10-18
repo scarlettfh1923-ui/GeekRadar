@@ -20,7 +20,7 @@ interface TaskDao {
     @Query(
         """SELECT * FROM tasks WHERE pageTitle LIKE '%' || :q || '%' OR finalTitle LIKE '%' || :q || '%'
            OR originalUrl LIKE '%' || :q || '%' OR rawInput LIKE '%' || :q || '%' OR finalBody LIKE '%' || :q || '%'
-           OR sourceText LIKE '%' || :q || '%' OR note LIKE '%' || :q || '%'
+           OR sourceText LIKE '%' || :q || '%' OR note LIKE '%' || :q || '%' OR tagsJson LIKE '%' || :q || '%'
            OR id IN (SELECT taskId FROM links WHERE rawUrl LIKE '%' || :q || '%')
            ORDER BY updatedAt DESC"""
     )
@@ -41,6 +41,7 @@ interface LinkDao {
     @Query("SELECT * FROM links WHERE taskId = :taskId ORDER BY position") fun observeForTask(taskId: Long): Flow<List<LinkEntity>>
     @Query("DELETE FROM links WHERE taskId = :taskId") suspend fun deleteForTask(taskId: Long)
     @Query("SELECT * FROM links") suspend fun all(): List<LinkEntity>
+    @Query("SELECT * FROM links WHERE userConfirmed = 0") suspend fun unconfirmed(): List<LinkEntity>
 
     @Transaction
     suspend fun replaceForTask(taskId: Long, links: List<LinkEntity>) { deleteForTask(taskId); insertAll(links) }

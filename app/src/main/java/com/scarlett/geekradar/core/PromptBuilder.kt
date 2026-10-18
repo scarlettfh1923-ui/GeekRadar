@@ -12,7 +12,6 @@ object PromptBuilder {
     data class Input(
         val pageTitle: String,
         val pageDescription: String,
-        val sourceLinkId: String?,
         val userNote: String,
         val text: String,
         val links: List<LinkForModel>,
@@ -38,9 +37,9 @@ object PromptBuilder {
     fun userMessage(input: Input): String {
         val sb = StringBuilder()
         sb.append("【任务参数】\n风格：${input.style}\n长度：${input.length}（${lengthHint(input.length)}）\n\n")
-        if (input.pageTitle.isNotBlank()) sb.append("【网页标题】\n${input.pageTitle.take(300)}\n\n")
+        val title = cleanTitle(input.pageTitle)
+        if (title.isNotBlank()) sb.append("【网页标题】\n${title.take(300)}\n\n")
         if (input.pageDescription.isNotBlank()) sb.append("【网页描述】\n${input.pageDescription.take(600)}\n\n")
-        input.sourceLinkId?.let { sb.append("【原始来源链接】$it\n\n") }
         if (input.userNote.isNotBlank()) sb.append("【用户附言（数据）】\n${input.userNote.take(1500)}\n\n")
 
         val links = input.links.take(input.maxLinks)
@@ -61,6 +60,18 @@ object PromptBuilder {
         sb.append("\n<<<CONTENT_END>>>\n")
         if (text.length > cut.length) sb.append("（正文过长已截断：原文 ${text.length} 字，发送前 ${cut.length} 字）\n")
         return sb.toString()
+    }
+
+    private val SOCIAL_TITLE = Regex("""^\s*(.+?)\s+(?:on|在)\s+(?:X|Twitter)\s*[:：]\s*["“](.*)["”]\s*(?:/\s*(?:X|Twitter))?\s*$""", RegexOption.DOT_MATCHES_ALL)
+    private val SOCIAL_SUFFIX = Regex("""\s*[/|｜-]\s*(?:X|Twitter)\s*$""")
+
+    /**
+     * 网页标题去掉"某某 on X: …"这类发帖人前缀，避免作者名被送进模型。只影响发给模型的数据，不改动保存的标题。
+     */
+    fun cleanTitle(title: String): String {
+        val t = title.trim()
+        SOCIAL_TITLE.find(t)?.let { return it.groupValues[2].trim() }
+        return t.replace(SOCIAL_SUFFIX, "").trim()
     }
 
     /** 发送前给用户看的摘要。 */

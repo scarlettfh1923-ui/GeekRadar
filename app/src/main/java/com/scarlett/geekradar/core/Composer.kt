@@ -20,12 +20,8 @@ object Composer {
         return PLACEHOLDER.replace(text) { m -> map[m.groupValues[1]]?.best ?: m.value }
     }
 
-    /** 结果页 / 复制使用的链接：原始来源 + 资源（若无资源则包含辅助链接中提供给模型的部分）。 */
-    fun exportLinks(links: List<LinkView>): List<LinkView> {
-        val res = links.filter { it.category == LinkCategory.RESOURCE }
-        val src = links.filter { it.category == LinkCategory.SOURCE }
-        return res + src
-    }
+    /** 「复制完整文案」附带的链接：只有资源链接。来源类（原帖 / 作者主页）永不进入文案。 */
+    fun exportLinks(links: List<LinkView>): List<LinkView> = links.filter { it.category == LinkCategory.RESOURCE }
 
     fun linkBlock(links: List<LinkView>): String {
         val list = exportLinks(links)
@@ -36,17 +32,58 @@ object Composer {
         }
     }
 
-    fun composeFull(title: String, body: String, links: List<LinkView>): String {
+    /** 完整文案 = 标题 + 正文（编号回填为原始链接）+ 资源链接 + 话题标签。 */
+    fun composeFull(title: String, body: String, links: List<LinkView>, tags: List<String> = emptyList()): String {
         val parts = ArrayList<String>()
         if (title.isNotBlank()) parts.add(title.trim())
         if (body.isNotBlank()) parts.add(expand(body.trim(), links))
         val block = linkBlock(links)
         if (block.isNotBlank()) parts.add(block)
+        val tagLine = Tags.line(tags)
+        if (tagLine.isNotBlank()) parts.add(tagLine)
         return parts.joinToString("\n\n")
     }
 
-    fun allLinksText(links: List<LinkView>): String = links.joinToString("\n\n") { l ->
+    /** 「复制全部链接」：不含来源类链接（原帖 / 作者主页），它们只留在应用内的链接清单里。 */
+    fun allLinksText(links: List<LinkView>): String = links.filter { it.category != LinkCategory.SOURCE }.joinToString("\n\n") { l ->
         "[${l.category.label}] ${l.name.ifBlank { l.linkId }}\n${l.best}"
+    }
+
+    // ---------------- 来源信息安全网 ----------------
+
+    private val AUTHOR_WORDS = Regex("""原帖|原推|原贴|原博|原文链接|原文地址|原文见|作者主页|博主主页|个人主页|作者表示|作者称|作者介绍|据作者|博主推荐|博主分享|楼主|发帖人|转自|via\s*@""", RegexOption.IGNORE_CASE)
+    private val AT_HANDLE = Regex("""(?<![A-Za-z0-9._%+-])@([A-Za-z0-9_]{2,30})""")
+
+    /** 从来源链接（如 x.com/<user>/status/…）中取出账号名。 */
+    fun handlesOf(links: List<LinkView>): Set<String> = links.filter { it.category == LinkCategory.SOURCE }.mapNotNull { l ->
+        val url = l.best
+        val host = UrlTools.hostOf(url).removePrefix("www.").removePrefix("mobile.")
+        val seg = UrlTools.pathOf(url).split('/').firstOrNull { it.isNotEmpty() } ?: return@mapNotNull null
+        if (host in setOf("x.com", "twitter.com", "threads.net", "threads.com", "instagram.com", "medium.com", "youtube.com", "t.me"))
+            seg.removePrefix("@").takeIf { it.length >= 3 && it.lowercase() !in setOf("home", "explore", "search", "channel", "user") } else null
+    }.toSet()
+
+    /**
+     * 生成后 / 编辑时的提醒：文案里仍含来源链接、来源编号、「原帖 / 作者主页」等字样或发帖人账号。
+     * 只提醒，不改动用户文字。
+     */
+    fun sourceMentionWarnings(texts: List<String>, links: List<LinkView>): List<String> {
+        val text = texts.joinToString("\n")
+        if (text.isBlank()) return emptyList()
+        val out = ArrayList<String>()
+        val src = links.filter { it.category == LinkCategory.SOURCE }
+        val urlHits = src.filter { l -> listOf(l.raw, l.resolved).any { it.isNotBlank() && text.contains(it.trim()) } }.map { it.linkId }
+        val refHits = placeholdersIn(text).filter { id -> src.any { it.linkId == id } }
+        val hits = (urlHits + refHits).distinct()
+        if (hits.isNotEmpty()) out.add("文案引用了来源链接 ${hits.joinToString("、")}（原帖 / 作者主页），复制和分享时会被带出，建议删除")
+        val words = AUTHOR_WORDS.findAll(text).map { it.value }.distinct().toList()
+        if (words.isNotEmpty()) out.add("文案中出现「${words.joinToString("、")}」等原帖 / 作者相关字样，建议改成直接介绍资源本身")
+        val handles = handlesOf(links)
+        val named = handles.filter { h -> Regex("""(?<![A-Za-z0-9_])@?${Regex.escape(h)}(?![A-Za-z0-9_])""", RegexOption.IGNORE_CASE).containsMatchIn(text) }
+        val ats = AT_HANDLE.findAll(text).map { "@" + it.groupValues[1] }.distinct().toList()
+        val accountHits = (named.map { "@$it" } + ats).distinctBy { it.lowercase() }
+        if (accountHits.isNotEmpty()) out.add("文案中出现账号名 ${accountHits.joinToString("、")}，可能是原发帖人信息，请确认是否删除")
+        return out
     }
 
     /**

@@ -62,6 +62,7 @@ fun LinkItem(l: LinkEntity, onCategory: ((LinkCategory) -> Unit)?) {
             Spacer(Modifier.width(6.dp))
             Text(l.name.ifBlank { l.anchorText.ifBlank { UrlTools.hostOf(l.best()) } }, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold,
                 color = G.c.text, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            if (cat == LinkCategory.SOURCE) Text(LinkCategory.SOURCE_NOTE, fontSize = 10.5.sp, color = G.c.tertiary)
         }
         if (l.purpose.isNotBlank()) Text(l.purpose, fontSize = 12.5.sp, color = G.c.secondary, modifier = Modifier.padding(top = 4.dp))
         Column(Modifier.padding(top = 5.dp)) {
@@ -83,6 +84,7 @@ fun LinkItem(l: LinkEntity, onCategory: ((LinkCategory) -> Unit)?) {
             if (l.categoryByAi) add("类别由 AI 建议")
             if (l.userConfirmed) add("已人工确认")
             if (l.programNote.isNotBlank()) add(l.programNote)
+            if (!l.sendToModel) add("不发给模型")
             if (l.userNote.isNotBlank()) add("备注：" + l.userNote)
         }
         Text(meta.joinToString(" · "), fontSize = 10.5.sp, color = G.c.tertiary, modifier = Modifier.padding(top = 3.dp))
@@ -92,7 +94,7 @@ fun LinkItem(l: LinkEntity, onCategory: ((LinkCategory) -> Unit)?) {
 /** 链接分组：主要链接全部展示，页面导航等"仅保存"链接折叠。 */
 @Composable
 fun LinkList(links: List<LinkEntity>, onCategory: ((LinkEntity, LinkCategory) -> Unit)?, primaryOnly: Boolean = false) {
-    val main = links.filter { it.sendToModel || it.category == LinkCategory.SOURCE.name || it.category == LinkCategory.RESOURCE.name }
+    val main = links.filter { it.sendToModel || (it.category == LinkCategory.SOURCE.name && it.sourceLocation == LinkLocation.INPUT) || it.category == LinkCategory.RESOURCE.name }
         .sortedBy { order(it) }
     val rest = links.filter { it !in main }
     var showRest by rememberSaveable { mutableStateOf(false) }

@@ -1,21 +1,31 @@
-# 极客雷达 GeekRadar 1.0.0
+# 极客雷达 GeekRadar 1.1.0
 
-一键把科技工具 / AI 应用 / GitHub 仓库 / 文章链接转成小红书中文文案的 Android 应用（Kotlin + Jetpack Compose + Room）。包名 `com.scarlett.geekradar`，minSdk 26，targetSdk 35。
+一键把科技工具 / AI 应用 / GitHub 仓库 / 文章链接转成小红书中文文案的 Android 应用（Kotlin + Jetpack Compose + Room）。包名 `com.scarlett.geekradar`，minSdk 26，targetSdk 35。版本 1.1.0（versionCode 2），与 1.0.0 使用同一签名证书，可直接覆盖安装，历史记录保留。
 
-## 功能
+## 1.1.0 新增
+- **文案不再出现原发帖人信息**：默认提示词明确以「搬运分享者」口吻直接介绍资源本身，禁止写作者名、@账号、主页、「原帖见 / 作者主页见」等，同时不得编造亲身体验。原帖链接、作者主页（x.com/<用户>、公众号主页、微博/知乎/B 站/YouTube 个人页等）由程序归为「来源」：不发给模型、不进「复制完整文案」和「复制全部链接」，只留在应用的链接清单里，标注「来源，不进文案」。发给模型的网页标题会去掉「某某 on X:」前缀。
+- **安全网**：结果页实时检查标题、正文和标签，如果仍含来源链接或编号、「原帖 / 作者主页」等字样、发帖人账号（@handle），会显示提醒。只提醒，不改你的文字。
+- **结果页重做**（按 mockups/v1.1）：标题、正文、标签三个独立编辑区；标签可以点 × 删除，也可以点「+ 添加」自定义（会存进历史和备份）；资源链接和事实核查默认折叠成一行，点开查看。
+- **分享到小红书**：主按钮依次把「标题 → 正文 → 标签（#标签 空格分隔）」三条写入剪贴板，间隔默认 1.5 秒，可在设置里调，这样输入法的剪贴板历史能留下三条；然后按设置的封面方式跳转，弹层里显示进度：
+  ① 使用小红书自带文字配图：只启动小红书（`com.xingin.xhs`），没装会提示；
+  ② 应用内生成封面图：用当前标题渲染 3:4（1080×1440）大字封面，不含作者信息。图片存在应用缓存里（不进相册），通过 FileProvider 以 `ACTION_SEND image/png` 发给小红书；失败时退回系统分享面板。
+- 设置页新增「分享到小红书」分组：封面方式（二选一）、剪贴板写入间隔、默认标签（每篇自动追加）、分享后自动打开小红书。
+- 「复制完整文案」= 标题 + 正文（编号换回原始链接）+ 资源链接 + 标签行。
+- 升级迁移：数据库 v1→v2 只新增标签列，不动旧数据；旧记录中未经你确认的作者主页 / 帖子链接改标为「来源」；提示词只在你没改过时更新。
+
+## 功能（1.0.0 起）
 - 三种输入：系统分享（SEND / PROCESS_TEXT，应用在后台也能接收）、粘贴链接、粘贴原文。识别到多个链接时让你选主链接，其余全部保存。
-- 抓取：OkHttp + Jsoup 提取标题、描述、正文和全部超链接，相对链接会解析成绝对地址，同时保留原始写法。本机失败或正文少于 200 字时，自动改用 Jina Reader 再读一次（默认开启，可关闭）；还不行就粘贴原文继续。
-- 链接保护：调用模型之前，程序先给每条链接编号（L1…）并按类别保存（原始来源/资源/辅助/待确认）。模型只能通过编号给出名称、用途和类别建议；正文里的 [L2] 在复制时由程序换回原始 URL；模型文案中出现的陌生 URL 或不存在的编号会显示警告。
-- DeepSeek：Base URL、模型名、Key 都可配置（Key 存在 Keystore 加密存储里），支持连接测试，错误会分类提示，输出解析有容错。
-- 提示词：可编辑、保存时自动生成版本快照、可恢复默认、可用未保存的版本测试；每条记录都保存当时用的提示词快照。
-- 结果页：3 个标题候选、标题和正文完整可编辑、自动保存草稿、手动保存、重新生成前确认（覆盖或保留修改）、复制完整文案/仅正文/全部链接、事实核查和不确定信息提示。
-- 历史：按标题/URL/正文搜索、按日期分组、继续编辑、重新生成、复制、删除（删除和清空都要确认）。
-- 备份：JSON 导出和导入（不含 API Key，导入前预览，重复记录跳过，整体事务写入）。
+- 抓取：用 OkHttp + Jsoup 提取标题、描述、正文和全部超链接，相对链接解析成绝对地址，同时保留原始写法。本机抓取失败或正文少于 200 字时，自动改用 Jina Reader 再读一次（默认开启，可关）；仍不行就粘贴原文继续。
+- 链接保护：调用模型前，程序先给每条链接编号（L1…）并按类别保存（来源 / 资源 / 辅助 / 待确认）。模型只能通过编号给出名称、用途和类别建议；正文里的 [L2] 在复制或分享时由程序换回原始 URL；模型文案中出现陌生 URL 或不存在的编号会警告。
+- DeepSeek：Base URL、模型名、Key 都可配置（Key 加密保存在 Keystore），支持连接测试，错误分类提示，输出解析有容错。
+- 提示词：可编辑、版本快照、恢复默认、用未保存的版本测试；每条记录保存当时的提示词快照。
+- 历史：按标题 / URL / 正文 / 标签搜索，继续编辑、重新生成、复制、删除（需确认）。
+- 备份：JSON 导出和导入（不含 API Key，导入前预览，重复跳过，单事务写入；可导入 1.0.0 的备份）。
 
 ## 目录
-- `app/src/main/java/com/scarlett/geekradar/core`：URL、抓取、链接分类、提示词、模型客户端、解析、组合（不依赖 Android，有单元测试）
-- `data`：Room、设置、加密 Key、备份、业务编排　`ui`：Compose 界面（方案 C）
-- `tools/mock_server.py`：开发用的 mock 接口　`docs/`：文档
+- `app/src/main/java/com/scarlett/geekradar/core`：URL、抓取、链接分类、提示词、模型客户端、解析、组合、标签、封面排版（不依赖 Android，有单元测试）
+- `data`：Room、设置、加密 Key、备份、业务编排　`ui`：Compose 界面　`ui/share`：封面渲染与小红书跳转
+- `tools/mock_server.py`：开发用 mock 接口　`docs/`：文档
 
 ## 文档
-[BUILD.md](docs/BUILD.md) · [API_CONFIG.md](docs/API_CONFIG.md) · [default_prompt.md](docs/default_prompt.md) · [DATA_MODEL.md](docs/DATA_MODEL.md) · [TESTING.md](docs/TESTING.md) · [LIMITATIONS.md](docs/LIMITATIONS.md)
+[BUILD.md](docs/BUILD.md) · [API_CONFIG.md](docs/API_CONFIG.md) · [default_prompt.md](docs/default_prompt.md) · [DATA_MODEL.md](docs/DATA_MODEL.md) · [TESTING.md](docs/TESTING.md) · [LIMITATIONS.md](docs/LIMITATIONS.md) · [CHANGELOG.md](docs/CHANGELOG.md)

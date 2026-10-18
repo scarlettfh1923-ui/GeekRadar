@@ -163,7 +163,7 @@ fun MiniButton(text: String, enabled: Boolean = true, onClick: () -> Unit) {
 }
 
 @Composable
-fun PrimaryButton(text: String, modifier: Modifier = Modifier, enabled: Boolean = true, loading: Boolean = false, onClick: () -> Unit) {
+fun PrimaryButton(text: String, modifier: Modifier = Modifier, enabled: Boolean = true, loading: Boolean = false, icon: ImageVector? = null, onClick: () -> Unit) {
     Row(
         modifier.height(50.dp).shadow(if (enabled) 6.dp else 0.dp, RoundedCornerShape(16.dp), ambientColor = G.c.accent, spotColor = G.c.accent)
             .clip(RoundedCornerShape(16.dp)).background(if (enabled) G.c.accent else G.c.tertiary)
@@ -171,6 +171,7 @@ fun PrimaryButton(text: String, modifier: Modifier = Modifier, enabled: Boolean 
         horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
     ) {
         if (loading) { CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp); Spacer(Modifier.width(10.dp)) }
+        else if (icon != null) { Icon(icon, null, tint = Color.White, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)) }
         Text(text, color = Color.White, fontSize = 15.5.sp, fontWeight = FontWeight.SemiBold)
     }
 }
@@ -214,18 +215,19 @@ fun Segmented(options: List<String>, selected: String, onSelect: (String) -> Uni
 @Composable
 fun Field(
     value: String, onChange: (String) -> Unit, placeholder: String, modifier: Modifier = Modifier,
-    minHeight: Int = 44, singleLine: Boolean = false, mono: Boolean = false, fontSize: Int = 15, bordered: Boolean = false,
+    minHeight: Int = 44, singleLine: Boolean = false, mono: Boolean = false, fontSize: Int = 15, bordered: Boolean = false, bold: Boolean = false,
 ) {
     val c = G.c
     BasicTextField(
         value = value, onValueChange = onChange, singleLine = singleLine,
-        textStyle = TextStyle(color = c.text, fontSize = fontSize.sp, lineHeight = (fontSize * 1.6).sp, fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default),
+        textStyle = TextStyle(color = c.text, fontSize = fontSize.sp, lineHeight = (fontSize * 1.6).sp, fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default,
+            fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal),
         cursorBrush = SolidColor(c.accent),
         modifier = modifier.fillMaxWidth().heightIn(min = minHeight.dp)
             .then(if (bordered) Modifier.border(3.dp, c.accentSoft, RoundedCornerShape(18.dp)) else Modifier),
         decorationBox = { inner ->
             Box {
-                if (value.isEmpty()) Text(placeholder, color = c.tertiary, fontSize = fontSize.sp, lineHeight = (fontSize * 1.6).sp)
+                if (value.isEmpty()) Text(placeholder, color = c.tertiary, fontSize = fontSize.sp, lineHeight = (fontSize * 1.6).sp, fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal)
                 inner()
             }
         },

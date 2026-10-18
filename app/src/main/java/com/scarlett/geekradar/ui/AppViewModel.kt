@@ -16,6 +16,11 @@ import androidx.lifecycle.viewModelScope
 import com.scarlett.geekradar.BuildConfig
 import com.scarlett.geekradar.GeekRadarApp
 import com.scarlett.geekradar.core.Composer
+import com.scarlett.geekradar.core.CoverLayout
+import com.scarlett.geekradar.core.Tags
+import com.scarlett.geekradar.data.SettingsStore
+import com.scarlett.geekradar.ui.share.CoverRenderer
+import com.scarlett.geekradar.ui.share.XhsShare
 import com.scarlett.geekradar.core.DeepSeekClient
 import com.scarlett.geekradar.core.LinkCategory
 import com.scarlett.geekradar.core.PromptBuilder
@@ -155,7 +160,8 @@ class AppViewModel(app: Application, private val ssh: SavedStateHandle) : Androi
     }
 
     fun setLinkCategory(l: LinkEntity, c: LinkCategory) = viewModelScope.launch {
-        repo.updateLink(l.copy(category = c.name, userConfirmed = true, categoryByAi = false, sendToModel = true))
+        // 用户手动改类别：来源类不发给模型，其余类别发给模型。
+        repo.updateLink(l.copy(category = c.name, userConfirmed = true, categoryByAi = false, sendToModel = c != LinkCategory.SOURCE))
     }
     fun setLinkNote(l: LinkEntity, note: String) = viewModelScope.launch { repo.updateLink(l.copy(userNote = note)) }
 
@@ -206,6 +212,8 @@ class AppViewModel(app: Application, private val ssh: SavedStateHandle) : Androi
         private set
     var editBody by mutableStateOf("")
         private set
+    var editTags by mutableStateOf<List<String>>(emptyList())
+        private set
     var editorDirty by mutableStateOf(false)
         private set
     var saveState by mutableStateOf("")
@@ -217,10 +225,10 @@ class AppViewModel(app: Application, private val ssh: SavedStateHandle) : Androi
         val stamp = t.generatedAt
         if (editTaskId != t.id) {
             flushEditorNow()
-            editTaskId = t.id; editTitle = t.finalTitle; editBody = t.finalBody; editorDirty = false; loadedStamp = stamp
+            editTaskId = t.id; editTitle = t.finalTitle; editBody = t.finalBody; editTags = Tags.fromJson(t.tagsJson); editorDirty = false; loadedStamp = stamp
             saveState = if (t.manuallySaved) "已保存" else if (t.userEdited) "已自动保存草稿" else ""
         } else if (stamp != loadedStamp && !editorDirty) {
-            editTitle = t.finalTitle; editBody = t.finalBody; loadedStamp = stamp
+            editTitle = t.finalTitle; editBody = t.finalBody; editTags = Tags.fromJson(t.tagsJson); loadedStamp = stamp
             saveState = ""
         }
     }
@@ -228,6 +236,21 @@ class AppViewModel(app: Application, private val ssh: SavedStateHandle) : Androi
     fun onBodyChange(v: String) { editBody = v; markDirty() }
     fun chooseTitle(v: String) { editTitle = v; markDirty() }
     fun replaceBody(v: String) { editBody = v; markDirty() }
+    /** 添加标签（可一次输入多个，空格 / 逗号 / # 分隔），自动去重。 */
+    fun addTags(input: String) {
+        val add = Tags.parseInput(input)
+        if (add.isEmpty()) return
+        val merged = Tags.merge(editTags, add)
+        if (merged != editTags) { editTags = merged; markDirty() }
+    }
+    /** 旧记录（1.0.0 生成）的标签写在正文末尾：用户点按后才把它们移到标签区，不会自动改动正文。 */
+    fun trailingTagsInBody(): List<String> = Tags.extractTrailing(editBody).second
+    fun moveTrailingTagsToTags() {
+        val (body, tags) = Tags.extractTrailing(editBody)
+        if (tags.isEmpty()) return
+        editBody = body; editTags = Tags.merge(editTags, tags); markDirty()
+    }
+    fun removeTag(tag: String) { editTags = editTags.filter { it != tag }; markDirty() }
     private fun markDirty() {
         editorDirty = true; saveState = "正在编辑…"
         editorJob?.cancel()
@@ -236,13 +259,13 @@ class AppViewModel(app: Application, private val ssh: SavedStateHandle) : Androi
     fun flushEditorNow(manual: Boolean = false) {
         val id = editTaskId
         if (id == 0L || (!editorDirty && !manual)) return
-        val title = editTitle; val body = editBody
+        val title = editTitle; val body = editBody; val tags = editTags
         val wasDirty = editorDirty
         editorJob?.cancel()
         viewModelScope.launch(NonCancellable) {
             try {
                 val t = repo.tasks.get(id) ?: return@launch
-                repo.updateTask(t.copy(finalTitle = title, finalBody = body,
+                repo.updateTask(t.copy(finalTitle = title, finalBody = body, tagsJson = Tags.toJson(tags),
                     userEdited = t.userEdited || wasDirty, manuallySaved = manual || t.manuallySaved))
                 editorDirty = false
                 saveState = if (manual) "已保存" else "已自动保存草稿"
@@ -254,7 +277,100 @@ class AppViewModel(app: Application, private val ssh: SavedStateHandle) : Androi
         }
     }
 
-    fun composeFull(links: List<LinkEntity>) = Composer.composeFull(editTitle, editBody, linkViews(links))
+    fun composeFull(links: List<LinkEntity>) = Composer.composeFull(editTitle, editBody, linkViews(links), editTags)
+    fun sourceWarnings(links: List<LinkEntity>) = Composer.sourceMentionWarnings(listOf(editTitle, editBody) + editTags, linkViews(links))
+
+    // ---------------- 分享到小红书 ----------------
+    /** 弹层中每一步的状态。 */
+    enum class StepState { WAIT, RUNNING, DONE, FAILED }
+    data class ShareStep(val title: String, val sub: String, val state: StepState)
+    data class ShareSheet(
+        val clip: ShareStep, val cover: ShareStep, val open: ShareStep,
+        val coverFile: java.io.File? = null, val coverMode: String, val finished: Boolean = false,
+        val title: String = "", val body: String = "", val tagLine: String = "", val count: Int = 0,
+    )
+    var shareSheet by mutableStateOf<ShareSheet?>(null)
+    /** 需要由界面（Activity 上下文）执行的跳转。 */
+    val launchRequests = MutableSharedFlow<ShareSheet>(extraBufferCapacity = 4)
+    private var shareJob: Job? = null
+
+    /**
+     * 「分享到小红书」：先依次把 标题 → 正文 → 标签 写入剪贴板（间隔可调，便于输入法剪贴板历史保留三条），
+     * 再按设置准备封面并跳转。跳转由界面执行（见 [onLaunchResult]）。
+     */
+    fun shareToXhs(links: List<LinkEntity>) {
+        if (shareJob?.isActive == true) return
+        flushEditorNow()
+        val app = getApplication<Application>()
+        val title = editTitle.trim()
+        val body = Composer.expand(editBody.trim(), linkViews(links))
+        val tagLine = Tags.line(editTags)
+        val items = listOf("标题" to title, "正文" to body, "标签" to tagLine).filter { it.second.isNotBlank() }
+        if (items.isEmpty()) { toast("标题、正文和标签都是空的"); return }
+        val mode = st.coverMode
+        val interval = st.clipIntervalMs
+        val coverTitle = if (mode == SettingsStore.COVER_GENERATED) "生成封面图" else "使用小红书文字配图"
+        var sheet = ShareSheet(
+            clip = ShareStep("正在写入剪贴板", "${items.joinToString("、") { it.first }} ${items.size} 条 · 间隔 ${fmtSec(interval)} 秒依次写入", StepState.RUNNING),
+            cover = ShareStep(coverTitle, if (mode == SettingsStore.COVER_GENERATED) "3:4 大字封面 · 1080×1440" else "在小红书发布页选「文字配图」，粘贴标题即可", StepState.WAIT),
+            open = ShareStep("打开小红书", if (st.autoOpenXhs) "写入完成后自动打开" else "点击下方按钮前往", StepState.WAIT),
+            coverMode = mode, title = title, body = body, tagLine = tagLine, count = items.size,
+        )
+        shareSheet = sheet
+        shareJob = viewModelScope.launch {
+            try {
+                items.forEachIndexed { i, (label, text) ->
+                    XhsShare.writeClip(app, "极客雷达 · $label", text)
+                    sheet = sheet.copy(clip = sheet.clip.copy(title = "正在写入剪贴板 ${i + 1}/${items.size}"))
+                    shareSheet = sheet
+                    if (i < items.lastIndex) delay(interval)
+                }
+                sheet = sheet.copy(clip = ShareStep("已写入剪贴板", "${items.joinToString("、") { it.first }} ${items.size} 条 · 间隔 ${fmtSec(interval)} 秒依次写入", StepState.DONE))
+                shareSheet = sheet
+            } catch (e: Exception) {
+                sheet = sheet.copy(clip = sheet.clip.copy(title = "写入剪贴板失败", sub = e.message ?: "未知错误", state = StepState.FAILED)); shareSheet = sheet
+            }
+            if (mode == SettingsStore.COVER_GENERATED) {
+                sheet = sheet.copy(cover = sheet.cover.copy(title = "正在生成封面图", state = StepState.RUNNING)); shareSheet = sheet
+                sheet = try {
+                    val f = withContext(Dispatchers.Default) {
+                        CoverRenderer.renderToCache(app, CoverLayout.content(editTaskId, title, editBody, editTags))
+                    }
+                    sheet.copy(cover = ShareStep("封面图已生成", "已存入应用缓存（不进相册）· 1080×1440", StepState.DONE), coverFile = f)
+                } catch (e: Exception) {
+                    sheet.copy(cover = ShareStep("封面图生成失败", (e.message ?: "未知错误") + "，将只打开小红书", StepState.FAILED))
+                }
+            } else {
+                sheet = sheet.copy(cover = sheet.cover.copy(state = StepState.DONE))
+            }
+            shareSheet = sheet
+            if (st.autoOpenXhs) {
+                sheet = sheet.copy(open = ShareStep("正在打开小红书", "在发布页依次粘贴即可", StepState.RUNNING)); shareSheet = sheet
+                launchRequests.tryEmit(sheet)
+            } else {
+                sheet = sheet.copy(finished = true); shareSheet = sheet
+            }
+        }
+    }
+
+    /** 弹层里点「去小红书粘贴」：再次跳转。 */
+    fun relaunchXhs() { shareSheet?.let { s -> shareSheet = s.copy(open = ShareStep("正在打开小红书", "在发布页依次粘贴即可", StepState.RUNNING)); launchRequests.tryEmit(shareSheet!!) } }
+
+    fun onLaunchResult(r: XhsShare.LaunchResult) {
+        val s = shareSheet ?: return
+        val step = when (r) {
+            XhsShare.LaunchResult.OpenedApp -> ShareStep("已打开小红书", "在发布页长按粘贴标题、正文和标签", StepState.DONE)
+            XhsShare.LaunchResult.SharedToXhs -> ShareStep("已把封面发送到小红书", "在编辑页长按粘贴标题、正文和标签", StepState.DONE)
+            XhsShare.LaunchResult.Chooser -> ShareStep("已打开系统分享面板", "无法直接分享给小红书，请在面板中选择小红书", StepState.DONE)
+            is XhsShare.LaunchResult.Failed -> ShareStep("没有打开小红书", r.message, StepState.FAILED)
+        }
+        shareSheet = s.copy(open = step, finished = true)
+    }
+    fun dismissShare() { shareJob?.cancel(); shareSheet = null }
+    /** 弹层里单独再复制某一条（输入法没有剪贴板历史时使用）。 */
+    fun copyOne(label: String, text: String) { XhsShare.writeClip(getApplication(), "极客雷达 · $label", text); toast("已复制$label") }
+
+    private fun fmtSec(ms: Long): String = if (ms % 1000 == 0L) (ms / 1000).toString() else "%.1f".format(ms / 1000.0)
     fun bodyExpanded(links: List<LinkEntity>) = Composer.expand(editBody, linkViews(links))
     fun linkViews(links: List<LinkEntity>) = links.map {
         Composer.LinkView(it.linkId, it.rawUrl, it.resolvedUrl, LinkCategory.fromName(it.category), it.name, it.sendToModel)
@@ -280,6 +396,14 @@ class AppViewModel(app: Application, private val ssh: SavedStateHandle) : Androi
     var sJinaKeySet by mutableStateOf(false)
     fun saveJinaKey(k: String) { repo.keys.jinaKey = k; refreshSettingsState(); toast(if (k.isBlank()) "已清除 Jina Key" else "Jina Key 已加密保存") }
     var sMaxChars by mutableIntStateOf(st.maxChars)
+    var sCoverMode by mutableStateOf(st.coverMode)
+    var sClipInterval by mutableLongStateOf(st.clipIntervalMs)
+    var sDefaultTags by mutableStateOf(st.defaultTags)
+    var sAutoOpen by mutableStateOf(st.autoOpenXhs)
+    fun setCoverMode(v: String) { st.coverMode = v; refreshSettingsState() }
+    fun setClipInterval(ms: Long) { st.clipIntervalMs = ms; refreshSettingsState() }
+    fun setDefaultTags(v: String) { st.defaultTags = Tags.parseInput(v).joinToString(" "); refreshSettingsState() }
+    fun setAutoOpen(v: Boolean) { st.autoOpenXhs = v; refreshSettingsState() }
     var sPrompt by mutableStateOf(st.prompt)
     var sPromptVersion by mutableIntStateOf(st.promptVersion)
     var sPromptUpdated by mutableLongStateOf(st.promptUpdatedAt)
@@ -289,6 +413,7 @@ class AppViewModel(app: Application, private val ssh: SavedStateHandle) : Androi
 
     fun refreshSettingsState() {
         sBaseUrl = st.baseUrl; sModel = st.model; sJina = st.jinaEnabled; sMaxChars = st.maxChars
+        sCoverMode = st.coverMode; sClipInterval = st.clipIntervalMs; sDefaultTags = st.defaultTags; sAutoOpen = st.autoOpenXhs
         sKeyMasked = repo.keys.masked(); sJinaKeySet = repo.keys.jinaKey.isNotBlank(); sKeyAvailable = repo.keys.available
         sPrompt = st.prompt; sPromptVersion = st.promptVersion; sPromptUpdated = st.promptUpdatedAt
     }

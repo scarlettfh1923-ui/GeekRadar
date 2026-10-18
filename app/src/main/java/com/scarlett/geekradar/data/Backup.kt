@@ -9,7 +9,8 @@ import org.json.JSONObject
  */
 object Backup {
     const val FORMAT = "geekradar-backup"
-    const val VERSION = 1
+    /** 2 = 1.1.0（任务增加 tags / generatedTags）。仍可导入 1.0.0 导出的 version 1 备份。 */
+    const val VERSION = 2
 
     data class Data(
         val tasks: List<Pair<TaskEntity, List<LinkEntity>>>,
@@ -72,6 +73,7 @@ object Backup {
         .put("titleCandidates", JSONArray(t.titleCandidatesJson)).put("selectedTitle", t.selectedTitle)
         .put("generatedBody", t.generatedBody).put("rawModelOutput", t.rawModelOutput).put("structuredOk", t.structuredOk)
         .put("factChecks", JSONArray(t.factChecksJson)).put("uncertain", JSONArray(t.uncertainJson)).put("warnings", JSONArray(t.warningsJson))
+        .put("tags", JSONArray(t.tagsJson)).put("generatedTags", JSONArray(t.generatedTagsJson))
         .put("pendingBody", t.pendingBody).put("finalTitle", t.finalTitle).put("finalBody", t.finalBody)
         .put("userEdited", t.userEdited).put("manuallySaved", t.manuallySaved).put("genStatus", t.genStatus).put("genError", t.genError)
         .put("generatedAt", t.generatedAt).put("modelName", t.modelName).put("promptVersion", t.promptVersion)
@@ -91,6 +93,7 @@ object Backup {
             generatedBody = o.optString("generatedBody"), rawModelOutput = o.optString("rawModelOutput"), structuredOk = o.optBoolean("structuredOk"),
             factChecksJson = (o.optJSONArray("factChecks") ?: JSONArray()).toString(), uncertainJson = (o.optJSONArray("uncertain") ?: JSONArray()).toString(),
             warningsJson = (o.optJSONArray("warnings") ?: JSONArray()).toString(), pendingBody = o.optString("pendingBody"),
+            tagsJson = (o.optJSONArray("tags") ?: JSONArray()).toString(), generatedTagsJson = (o.optJSONArray("generatedTags") ?: JSONArray()).toString(),
             finalTitle = o.optString("finalTitle"), finalBody = o.optString("finalBody"), userEdited = o.optBoolean("userEdited"),
             manuallySaved = o.optBoolean("manuallySaved"), genStatus = status, genError = o.optString("genError"),
             generatedAt = o.optLong("generatedAt"), modelName = o.optString("modelName"), promptVersion = o.optInt("promptVersion"),

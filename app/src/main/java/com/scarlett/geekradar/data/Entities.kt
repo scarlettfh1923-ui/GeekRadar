@@ -41,11 +41,15 @@ data class TaskEntity(
     val factChecksJson: String = "[]",
     val uncertainJson: String = "[]",
     val warningsJson: String = "[]",
+    /** 模型本次生成给出的标签（JSON 数组）。1.1.0 新增。 */
+    val generatedTagsJson: String = "[]",
     /** 用户保留修改时，新一次生成的正文暂存于此供参考。 */
     val pendingBody: String = "",
     // ---- 用户最终文案 ----
     val finalTitle: String = "",
     val finalBody: String = "",
+    /** 用户最终的话题标签（JSON 字符串数组，不带 #）。1.1.0 新增，数据库 v2。 */
+    val tagsJson: String = "[]",
     val userEdited: Boolean = false,
     val manuallySaved: Boolean = false,
     // ---- 生成元数据 ----

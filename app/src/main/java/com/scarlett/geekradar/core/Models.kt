@@ -1,8 +1,8 @@
 package com.scarlett.geekradar.core
 
-/** 链接类别（任务书 6.1）。 */
+/** 链接类别（任务书 6.1）。SOURCE = 原帖 / 原始来源 / 作者主页：只在应用内保存展示，不发给模型、不进复制的文案。 */
 enum class LinkCategory(val label: String, val modelKey: String) {
-    SOURCE("原始来源", "source"),
+    SOURCE("来源", "source"),
     RESOURCE("资源", "resource"),
     AUX("辅助", "auxiliary"),
     PENDING("待确认", "pending");
@@ -15,10 +15,12 @@ enum class LinkCategory(val label: String, val modelKey: String) {
                 "resource", "资源", "资源链接" -> RESOURCE
                 "auxiliary", "aux", "辅助", "辅助链接", "reference" -> AUX
                 "pending", "unknown", "待确认" -> PENDING
-                "source", "原始来源" -> SOURCE
+                "source", "来源", "原始来源" -> SOURCE
                 else -> null
             }
         }
+        /** 来源类链接在界面上的固定说明。 */
+        const val SOURCE_NOTE = "来源，不进文案"
     }
 }
 

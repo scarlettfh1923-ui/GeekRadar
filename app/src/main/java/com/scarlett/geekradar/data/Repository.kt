@@ -12,6 +12,7 @@ import com.scarlett.geekradar.core.LinkLocation
 import com.scarlett.geekradar.core.OutputParser
 import com.scarlett.geekradar.core.PageFetcher
 import com.scarlett.geekradar.core.PromptBuilder
+import com.scarlett.geekradar.core.Tags
 import com.scarlett.geekradar.core.UrlTools
 import org.json.JSONArray
 import java.util.UUID
@@ -35,8 +36,34 @@ class Repository(
             settings.promptUpdatedAt = System.currentTimeMillis()
             prompts.insert(PromptSnapshotEntity(version = 1, content = DefaultPrompt.TEXT, createdAt = System.currentTimeMillis(), label = "默认提示词"))
             settings.promptInitialized = true
+            settings.defaultPromptRevision = DefaultPrompt.REVISION
+            settings.linksReclassifiedV2 = true
+        } else {
+            migrateDefaultPrompt()
+            reclassifyLinksV2()
         }
         tasks.markInterrupted()
+    }
+
+    /**
+     * 升级迁移：用户当前提示词仍等于旧版内置默认（从未自定义）→ 换成新默认（作为新版本保存，旧版留在快照里）；
+     * 已自定义的提示词保持不动。只执行一次。
+     */
+    private suspend fun migrateDefaultPrompt() {
+        if (settings.defaultPromptRevision >= DefaultPrompt.REVISION) return
+        DefaultPrompt.migrationTarget(settings.prompt, settings.defaultPromptRevision)?.let { savePrompt(it, "升级到 1.1.0 默认提示词") }
+        settings.defaultPromptRevision = DefaultPrompt.REVISION
+    }
+
+    /**
+     * 1.1.0 一次性处理旧记录的链接：未经用户确认的作者主页 / 帖子链接改为「来源」，所有来源类链接不再发给模型。
+     * 只改类别和 sendToModel 标记，原始 URL、名称、备注一律不动。
+     */
+    private suspend fun reclassifyLinksV2() {
+        if (settings.linksReclassifiedV2) return
+        val changed = links.unconfirmed().mapNotNull { l -> reclassifiedV2(l) }
+        if (changed.isNotEmpty()) links.updateAll(changed)
+        settings.linksReclassifiedV2 = true
     }
 
     // ---------------- 任务创建与抓取 ----------------
@@ -83,7 +110,8 @@ class Repository(
                 sourceLocation = c.location,
                 category = if (o != null && o.userConfirmed) o.category else c.category.name,
                 anchorText = c.anchor, name = o?.name ?: "", purpose = o?.purpose ?: "", userNote = o?.userNote ?: "",
-                programNote = c.note, occurrences = c.occurrences, sendToModel = c.sendToModel || (o?.userConfirmed == true),
+                programNote = c.note, occurrences = c.occurrences,
+                sendToModel = if (o != null && o.userConfirmed) o.category != LinkCategory.SOURCE.name else c.sendToModel,
                 userConfirmed = o?.userConfirmed ?: false, position = i,
             )
         }
@@ -145,7 +173,8 @@ class Repository(
             n++
             val g = LinkClassifier.guess(raw, LinkLocation.TEXT)
             LinkEntity(taskId = taskId, linkId = "L$n", rawUrl = raw, resolvedUrl = raw, normalizedUrl = UrlTools.normalizeForMatch(raw),
-                sourceLocation = LinkLocation.TEXT, category = g.category.name, programNote = g.note, position = existing.size + i)
+                sourceLocation = LinkLocation.TEXT, category = g.category.name, programNote = g.note, position = existing.size + i,
+                sendToModel = g.category != LinkCategory.SOURCE)
         }
         links.insertAll(add)
     }
@@ -170,9 +199,8 @@ class Repository(
 
     fun buildInput(t: TaskEntity, ls: List<LinkEntity>): PromptBuilder.Input = PromptBuilder.Input(
         pageTitle = t.pageTitle, pageDescription = t.pageDescription,
-        sourceLinkId = ls.firstOrNull { it.category == LinkCategory.SOURCE.name }?.linkId,
         userNote = userNoteOf(t), text = t.sourceText,
-        links = ls.filter { it.sendToModel }.map { PromptBuilder.LinkForModel(it.linkId, it.rawUrl, LinkCategory.fromName(it.category), it.anchorText, it.sourceLocation) },
+        links = linksForModel(ls).map { PromptBuilder.LinkForModel(it.linkId, it.rawUrl, LinkCategory.fromName(it.category), it.anchorText, it.sourceLocation) },
         style = t.style, length = t.length, maxChars = settings.maxChars,
     )
 
@@ -213,11 +241,14 @@ class Repository(
                 warnings.addAll(Composer.checkLinks(parsed.titles + parsed.body, linkViews(curLinks), parsed.suggestions.map { it.id }))
                 val overwrite = !keepEdits || !cur.userEdited
                 val newTitles = parsed.titles
+                val newTags = Tags.merge(parsed.tags, Tags.parseInput(settings.defaultTags))
                 tasks.update(cur.copy(
                     titleCandidatesJson = JSONArray(newTitles).toString(),
                     generatedBody = parsed.body, rawModelOutput = res.content, structuredOk = parsed.structured,
                     factChecksJson = JSONArray(parsed.factChecks).toString(), uncertainJson = JSONArray(parsed.uncertain).toString(),
                     warningsJson = JSONArray(warnings).toString(),
+                    generatedTagsJson = Tags.toJson(parsed.tags),
+                    tagsJson = if (overwrite) Tags.toJson(newTags) else cur.tagsJson,
                     genStatus = "DONE", genError = "", generatedAt = System.currentTimeMillis(),
                     modelName = res.model.ifBlank { cfg.model }, promptVersion = if (promptOverride != null) -1 else promptVersion, promptSnapshot = prompt,
                     finalTitle = if (overwrite) (newTitles.firstOrNull() ?: cur.finalTitle.ifBlank { cur.pageTitle }) else cur.finalTitle,
@@ -298,22 +329,51 @@ class Repository(
             if (s.has("temperature")) settings.temperature = s.optDouble("temperature", 0.7).toFloat()
             s.optString("defaultStyle").takeIf { it.isNotBlank() }?.let { settings.defaultStyle = it }
             s.optString("defaultLength").takeIf { it.isNotBlank() }?.let { settings.defaultLength = it }
+            s.optString("coverMode").takeIf { it.isNotBlank() }?.let { settings.coverMode = it }
+            if (s.has("clipIntervalMs")) settings.clipIntervalMs = s.optLong("clipIntervalMs", settings.clipIntervalMs)
+            if (s.has("defaultTags")) settings.defaultTags = s.optString("defaultTags")
+            if (s.has("autoOpenXhs")) settings.autoOpenXhs = s.optBoolean("autoOpenXhs", true)
         }
         return added
     }
 
     companion object {
+        /** 1.1.0 规则下某条（未经用户确认的）链接是否需要改类别 / 改发送标记；无需改动返回 null。 */
+        fun reclassifiedV2(l: LinkEntity): LinkEntity? {
+            if (l.userConfirmed) return null
+            val toSource = l.category != LinkCategory.SOURCE.name && LinkClassifier.isAuthorOrPost(l.resolvedUrl.ifBlank { l.rawUrl })
+            val cat = if (toSource) LinkCategory.SOURCE.name else l.category
+            // 1.0.0 时用户分享的主链接一律是 SOURCE；若它本身是资源（如 GitHub 仓库），按新规则改回资源。
+            val mainRes = l.category == LinkCategory.SOURCE.name && l.sourceLocation == LinkLocation.INPUT &&
+                LinkClassifier.mainLinkGuess(l.rawUrl).category == LinkCategory.RESOURCE
+            val finalCat = if (mainRes) LinkCategory.RESOURCE.name else cat
+            val send = if (finalCat == LinkCategory.SOURCE.name) false else if (mainRes) true else l.sendToModel
+            val note = when {
+                toSource -> listOf(l.programNote, LinkCategory.SOURCE_NOTE).filter { it.isNotBlank() }.joinToString("；")
+                mainRes -> listOf(l.programNote, "你分享的链接本身就是资源").filter { it.isNotBlank() }.joinToString("；")
+                else -> l.programNote
+            }
+            if (finalCat == l.category && send == l.sendToModel) return null
+            return l.copy(category = finalCat, sendToModel = send, programNote = note)
+        }
+
+        /** 发给模型的链接：来源类（原帖 / 作者主页）一律排除，模型看不到也就无法在文案里引用。 */
+        fun linksForModel(ls: List<LinkEntity>): List<LinkEntity> = ls.filter { l ->
+            l.sendToModel && l.category != LinkCategory.SOURCE.name &&
+                (l.userConfirmed || !LinkClassifier.isAuthorOrPost(l.resolvedUrl.ifBlank { l.rawUrl }))
+        }
+
         const val FETCH_FAIL = "暂时无法自动获取网页内容，你可以直接粘贴原文，继续生成文案。"
 
         val SAMPLE_INPUT = PromptBuilder.Input(
             pageTitle = "browser-use: Make websites accessible for AI agents",
             pageDescription = "开源 Python 库，让大模型操作真实浏览器",
-            sourceLinkId = "L1", userNote = "",
+            userNote = "",
             text = "browser-use is an open-source Python library that connects LLM agents to a real browser. " +
                 "Agents can open pages, click buttons, fill forms and extract data. Install with pip install browser-use, " +
                 "then configure your model API key. A hosted cloud version is also available. Docs cover quickstart and examples.",
             links = listOf(
-                PromptBuilder.LinkForModel("L1", "https://github.com/browser-use/browser-use", LinkCategory.SOURCE, "", LinkLocation.INPUT),
+                PromptBuilder.LinkForModel("L1", "https://github.com/browser-use/browser-use", LinkCategory.RESOURCE, "", LinkLocation.INPUT),
                 PromptBuilder.LinkForModel("L2", "https://cloud.browser-use.com/?ref=gh_readme&lang=zh-CN", LinkCategory.AUX, "Cloud", LinkLocation.CONTENT),
                 PromptBuilder.LinkForModel("L3", "https://docs.browser-use.com/quickstart", LinkCategory.RESOURCE, "Docs", LinkLocation.CONTENT),
             ),

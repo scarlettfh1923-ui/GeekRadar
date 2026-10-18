@@ -17,6 +17,11 @@ PAGE = """<html><head><title>browser-use：让 AI 操作浏览器</title><meta n
 镜像下载：<a href="http://example-mirror.cn/bu_v0.5.zip?t=17%3A02">zip</a></p></article>
 <footer><a href="https://browser-use.com/privacy">Privacy</a></footer></body></html>"""
 
+XPOST = """<html><head><title>Geek Share on X: "browser-use 让 AI 替你点网页" / X</title></head><body>
+<nav><a href="https://x.com/home">Home</a> <a href="https://x.com/explore">Explore</a></nav>
+<article><p><a href="https://x.com/geekshare">@geekshare</a> 分享：""" + ("browser-use 是一个开源 Python 库，能把大模型接到真实浏览器上，自动打开网页、点击按钮、填写表单。" * 4) + """</p>
+<p>仓库 <a href="https://github.com/browser-use/browser-use">GitHub</a>，文档 <a href="https://docs.browser-use.com/quickstart">Docs</a></p></article></body></html>"""
+
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def send(self, code, body, ctype="application/json"):
@@ -27,6 +32,7 @@ class H(BaseHTTPRequestHandler):
             if self.headers.get("Authorization") != "Bearer sk-mock-good": return self.send(401, json.dumps({"error": {"message": "Authentication Fails, Your api key is invalid"}}))
             return self.send(200, json.dumps({"object": "list", "data": [{"id": "deepseek-flash"}, {"id": "deepseek-v4-pro"}]}))
         if self.path.startswith("/page/ok"): return self.send(200, PAGE, "text/html")
+        if self.path.startswith("/page/xpost"): return self.send(200, XPOST, "text/html")
         if self.path.startswith("/page/blocked"): return self.send(403, "<html>Forbidden</html>", "text/html")
         self.send(404, "{}")
     def do_POST(self):
@@ -34,7 +40,8 @@ class H(BaseHTTPRequestHandler):
         msgs = req.get("messages", []); system = msgs[0]["content"] if msgs else ""; user = msgs[-1]["content"] if msgs else ""
         with open(LOG, "a") as f:
             f.write(json.dumps({"t": time.strftime("%H:%M:%S"), "path": self.path, "model": req.get("model"), "auth_ok": self.headers.get("Authorization") == "Bearer sk-mock-good",
-                                "system_head": system[:80], "user_len": len(user)}, ensure_ascii=False) + "\n")
+                                "system_head": system[:80], "user_len": len(user),
+                                "user_has_author_link": "x.com/geekshare" in user, "user_has_source_line": "原始来源链接" in user, "user_link_lines": re.findall(r"^L\d+ \|.*$", user, re.M)}, ensure_ascii=False) + "\n")
         if self.headers.get("Authorization") != "Bearer sk-mock-good": return self.send(401, json.dumps({"error": {"message": "Authentication Fails, Your api key is invalid"}}))
         if req.get("model") == "bad-model": return self.send(400, json.dumps({"error": {"message": "Model Not Exist"}}))
         if req.get("model") == "slow-model": time.sleep(200)

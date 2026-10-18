@@ -48,7 +48,25 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Send
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import com.scarlett.geekradar.BuildConfig
+import com.scarlett.geekradar.core.CoverLayout
+import com.scarlett.geekradar.core.DefaultPrompt
+import com.scarlett.geekradar.data.SettingsStore
+import com.scarlett.geekradar.ui.share.CoverRenderer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.scarlett.geekradar.core.DeepSeekClient
 import com.scarlett.geekradar.core.UrlTools
 import com.scarlett.geekradar.ui.AppViewModel
@@ -77,6 +95,20 @@ fun SettingsScreen(vm: AppViewModel) {
     Column(Modifier.fillMaxSize()) {
         LargeTitleBar("设置")
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+            SectionLabel("分享到小红书")
+            GroupCard {
+                Text("封面方式", fontSize = 11.5.sp, color = G.c.tertiary, modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 2.dp))
+                CoverOption("使用小红书自带文字配图", "只写入文字并打开小红书，在发布页选「文字配图」", vm.sCoverMode == SettingsStore.COVER_XHS, null) { vm.setCoverMode(SettingsStore.COVER_XHS) }
+                CoverOption("应用内生成封面图", "用标题生成 3:4 大字封面，存在应用缓存（不进相册），随分享发给小红书", vm.sCoverMode == SettingsStore.COVER_GENERATED, { CoverThumb() }) { vm.setCoverMode(SettingsStore.COVER_GENERATED) }
+                RowDivider()
+                SettingRow(Icons.Filled.DateRange, "剪贴板写入间隔", "标题 → 正文 → 标签 依次写入", "${fmtSec(vm.sClipInterval)} 秒") { editing = "interval" }
+                RowDivider()
+                SettingRow(Icons.Filled.Edit, "默认标签", "每篇生成后自动追加", vm.sDefaultTags.takeIf { it.isNotBlank() }?.split(" ")?.joinToString(" ") { "#$it" } ?: "未设置") { editing = "tags" }
+                RowDivider()
+                SettingRow(Icons.Filled.Send, "分享后自动打开小红书", "关闭后需在弹层中手动点击「去小红书粘贴」",
+                    trailing = { Switch(vm.sAutoOpen, { vm.setAutoOpen(it) }, colors = SwitchDefaults.colors(checkedTrackColor = G.c.accent)) })
+            }
+
             SectionLabel("模型与 API")
             GroupCard {
                 SettingRow(Icons.Filled.Lock, "API Key", if (vm.sKeyAvailable) "已加密保存在本机（Android Keystore）" else "本机加密存储不可用", vm.sKeyMasked, mono = true) { editing = "key" }
@@ -112,7 +144,7 @@ fun SettingsScreen(vm: AppViewModel) {
             GroupCard {
                 Column(Modifier.padding(14.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("当前提示词", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = G.c.text, modifier = Modifier.weight(1f))
+                        Text(if (vm.sPrompt.trim() == DefaultPrompt.TEXT.trim()) DefaultPrompt.VERSION_LABEL else "自定义提示词", fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = G.c.text, modifier = Modifier.weight(1f))
                         Text("使用中", fontSize = 11.sp, color = G.c.accent, modifier = Modifier.clip(RoundedCornerShape(20.dp)).background(G.c.accentSoft).padding(horizontal = 8.dp, vertical = 2.dp))
                     }
                     Text(vm.sPrompt.take(140) + "…", fontSize = 11.5.sp, lineHeight = 18.sp, fontFamily = FontFamily.Monospace, color = G.c.text.copy(alpha = 0.8f),
@@ -151,6 +183,8 @@ fun SettingsScreen(vm: AppViewModel) {
             "key" -> Triple("DeepSeek API Key", "", "sk-…（留空并保存可清除）")
             "jina" -> Triple("Jina API Key（可选）", "", "jina_…（留空并保存可清除）")
             "model" -> Triple("模型名称", vm.sModel, DeepSeekClient.DEFAULT_MODEL)
+            "tags" -> Triple("默认标签", vm.sDefaultTags, "例如：AI工具 效率神器（空格分隔，留空表示不追加）")
+            "interval" -> Triple("剪贴板写入间隔（秒）", fmtSec(vm.sClipInterval), "1.5")
             "base" -> Triple("Base URL", vm.sBaseUrl, DeepSeekClient.DEFAULT_BASE_URL)
             else -> Triple("正文上限（字）", vm.sMaxChars.toString(), "12000")
         }
@@ -160,7 +194,11 @@ fun SettingsScreen(vm: AppViewModel) {
             title = { Text(title) },
             text = {
                 Column {
-                    GroupCard(padding = true, modifier = Modifier.background(G.c.fieldBg)) { Field(v, { v = it }, hint, singleLine = true, mono = which != "chars", minHeight = 24, fontSize = 14) }
+                    GroupCard(padding = true, modifier = Modifier.background(G.c.fieldBg)) { Field(v, { v = it }, hint, singleLine = true, mono = which !in setOf("chars", "tags", "interval"), minHeight = 24, fontSize = 14) }
+                    if (which == "interval") Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("0.8", "1", "1.5", "2", "3").forEach { o -> MiniButton(o + " 秒") { v = o } }
+                    }
+                    if (which == "interval") Text("间隔太短时，部分输入法的剪贴板历史可能只记下最后一条。范围 0.3–5 秒。", fontSize = 12.sp, color = G.c.secondary, modifier = Modifier.padding(top = 8.dp))
                     if (which == "base") Text("使用第三方兼容接口时，请确认其兼容 OpenAI Chat Completions 格式；不保证所有接口都可用。", fontSize = 12.sp, color = G.c.secondary, modifier = Modifier.padding(top = 8.dp))
                     if (which == "key") Text("Key 只加密保存在本机，不会写入日志，也不会随普通备份导出。", fontSize = 12.sp, color = G.c.secondary, modifier = Modifier.padding(top = 8.dp))
                 }
@@ -172,6 +210,8 @@ fun SettingsScreen(vm: AppViewModel) {
                         "jina" -> vm.saveJinaKey(v)
                         "model" -> vm.saveModel(v)
                         "base" -> vm.saveBaseUrl(v)
+                        "tags" -> vm.setDefaultTags(v)
+                        "interval" -> v.trim().toDoubleOrNull()?.takeIf { it in 0.3..5.0 }?.let { vm.setClipInterval((it * 1000).toLong()) } ?: vm.toast("请输入 0.3–5 之间的秒数")
                         else -> v.trim().toIntOrNull()?.takeIf { it in 1000..100000 }?.let(vm::setMaxChars) ?: vm.toast("请输入 1000–100000 之间的数字")
                     }
                     editing = null
@@ -229,5 +269,32 @@ fun SettingsScreen(vm: AppViewModel) {
             confirmButton = { TextButton(onClick = { vm.applyImport(withPrompt, withSettings) }) { Text("导入") } },
             dismissButton = { TextButton(onClick = { vm.importPreview = null }) { Text("取消") } },
         )
+    }
+}
+
+private fun fmtSec(ms: Long): String = if (ms % 1000 == 0L) (ms / 1000).toString() else "%.1f".format(ms / 1000.0)
+
+@Composable
+private fun CoverOption(title: String, sub: String, selected: Boolean, thumb: (@Composable () -> Unit)?, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(start = 4.dp, end = 14.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        RadioButton(selected, onClick, colors = RadioButtonDefaults.colors(selectedColor = G.c.accent))
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 15.sp, color = G.c.text)
+            Text(sub, fontSize = 12.sp, color = G.c.secondary, modifier = Modifier.padding(top = 2.dp))
+        }
+        if (thumb != null) { Spacer(Modifier.width(10.dp)); thumb() }
+    }
+}
+
+/** 封面样例缩略图（用示例标题现场渲染，与实际生成的封面同一套绘制代码）。 */
+@Composable
+private fun CoverThumb() {
+    val img by produceState<ImageBitmap?>(null) {
+        value = withContext(Dispatchers.Default) {
+            runCatching { CoverRenderer.preview(CoverLayout.content(27, "让 AI 替你点网页", "一句中文，自动打开网页、点按钮、填表单。", listOf("开源工具", "GitHub开源", "免费")), 180).asImageBitmap() }.getOrNull()
+        }
+    }
+    Box(Modifier.size(width = 39.dp, height = 52.dp).clip(RoundedCornerShape(6.dp)).background(G.c.fieldBg).border(0.5.dp, G.c.divider, RoundedCornerShape(6.dp))) {
+        img?.let { Image(it, "封面样例", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
     }
 }

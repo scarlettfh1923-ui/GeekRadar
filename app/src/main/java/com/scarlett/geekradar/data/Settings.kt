@@ -48,10 +48,44 @@ class SettingsStore(ctx: Context) {
         get() = p.getBoolean("promptInit", false)
         set(v) = p.edit().putBoolean("promptInit", v).apply()
 
+    /** 已应用到哪一版内置默认提示词（见 DefaultPrompt.REVISION）。1.0.0 没有这个键，按 1 处理。 */
+    var defaultPromptRevision: Int
+        get() = p.getInt("defaultPromptRev", 1)
+        set(v) = p.edit().putInt("defaultPromptRev", v).apply()
+    /** 1.1.0 一次性链接重分类（作者主页 / 帖子 → 来源）是否已执行。 */
+    var linksReclassifiedV2: Boolean
+        get() = p.getBoolean("linksReclassV2", false)
+        set(v) = p.edit().putBoolean("linksReclassV2", v).apply()
+
+    // ---------------- 分享到小红书（1.1.0） ----------------
+    /** 封面方式：COVER_XHS = 使用小红书自带文字配图；COVER_GENERATED = 应用内生成封面图。 */
+    var coverMode: String
+        get() = p.getString("coverMode", COVER_GENERATED)!!.let { if (it == COVER_XHS) COVER_XHS else COVER_GENERATED }
+        set(v) = p.edit().putString("coverMode", v).apply()
+    /** 依次写入剪贴板（标题 → 正文 → 标签）的间隔，毫秒。 */
+    var clipIntervalMs: Long
+        get() = p.getLong("clipIntervalMs", 1500L).coerceIn(MIN_INTERVAL, MAX_INTERVAL)
+        set(v) = p.edit().putLong("clipIntervalMs", v.coerceIn(MIN_INTERVAL, MAX_INTERVAL)).apply()
+    /** 默认标签（空格分隔，不带 #），每次生成后自动追加。 */
+    var defaultTags: String
+        get() = p.getString("defaultTags", "")!!
+        set(v) = p.edit().putString("defaultTags", v.trim()).apply()
+    var autoOpenXhs: Boolean
+        get() = p.getBoolean("autoOpenXhs", true)
+        set(v) = p.edit().putBoolean("autoOpenXhs", v).apply()
+
     fun exportable(): Map<String, Any> = mapOf(
         "baseUrl" to baseUrl, "model" to model, "temperature" to temperature.toDouble(), "jinaEnabled" to jinaEnabled,
         "maxChars" to maxChars, "defaultStyle" to defaultStyle, "defaultLength" to defaultLength,
+        "coverMode" to coverMode, "clipIntervalMs" to clipIntervalMs, "defaultTags" to defaultTags, "autoOpenXhs" to autoOpenXhs,
     )
+
+    companion object {
+        const val COVER_XHS = "xhs"
+        const val COVER_GENERATED = "generated"
+        const val MIN_INTERVAL = 300L
+        const val MAX_INTERVAL = 5000L
+    }
 }
 
 /**

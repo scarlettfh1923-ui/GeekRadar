@@ -20,6 +20,8 @@ object OutputParser {
         val uncertain: List<String>,
         val raw: String,
         val problem: String?,
+        /** 话题标签（不带 #）。模型未给 tags 字段时，从正文末尾的 #标签 行中提取。 */
+        val tags: List<String> = emptyList(),
     )
 
     fun parse(raw: String): Parsed {
@@ -46,8 +48,10 @@ object OutputParser {
                     titles.isEmpty() -> "模型未返回标题候选"
                     else -> null
                 }
-                return Parsed(true, titles.take(5), body.trim(), sugg,
-                    strList(obj, "fact_checks", "factChecks", "事实核查"), strList(obj, "uncertain", "uncertainties", "不确定信息"), raw, problem)
+                val (cleanBody, trailing) = Tags.extractTrailing(body.trim())
+                val tags = Tags.merge(strList(obj, "tags", "hashtags", "topics", "标签", "话题").flatMap { it.split(Regex("""[\s,，、]+""")) }, trailing)
+                return Parsed(true, titles.take(5), cleanBody.trim(), sugg,
+                    strList(obj, "fact_checks", "factChecks", "事实核查"), strList(obj, "uncertain", "uncertainties", "不确定信息"), raw, problem, tags)
             }
         }
         // 非结构化 / 残缺 JSON：尽量抢救字段，否则整段原文作为正文。
@@ -55,7 +59,8 @@ object OutputParser {
         val salvagedTitles = Regex(""""titles"\s*:\s*\[(.*?)(\]|$)""", RegexOption.DOT_MATCHES_ALL).find(text)?.groupValues?.get(1)
             ?.let { Regex(""""((?:[^"\\]|\\.)*)"""").findAll(it).map { m -> unescape(m.groupValues[1]) }.toList() } ?: emptyList()
         return if (!salvagedBody.isNullOrBlank()) {
-            Parsed(false, salvagedTitles, salvagedBody, emptyList(), emptyList(), emptyList(), raw, "模型返回的 JSON 不完整，已尽量提取正文，请核对或重新生成")
+            val (cleanBody, trailing) = Tags.extractTrailing(salvagedBody)
+            Parsed(false, salvagedTitles, cleanBody, emptyList(), emptyList(), emptyList(), raw, "模型返回的 JSON 不完整，已尽量提取正文，请核对或重新生成", trailing)
         } else {
             Parsed(false, salvagedTitles, stripFence(text), emptyList(), emptyList(), emptyList(), raw,
                 if (looksLikeJson(text)) "模型返回格式异常（JSON 无法解析），已保留原始输出" else "模型输出了非标准结构，已原样放入正文，可手动编辑")

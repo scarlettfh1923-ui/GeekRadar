@@ -123,7 +123,7 @@ private fun HistoryItem(vm: AppViewModel, t: TaskEntity, onDelete: () -> Unit) {
                 DropdownMenuItem(text = { Text("重新生成（处理页）") }, onClick = { menu = false; vm.push(Route(Route.PROCESS, t.id)) })
                 DropdownMenuItem(text = { Text("复制文案") }, onClick = {
                     menu = false
-                    scope.launch { copyText(ctx, "完整文案", Composer.composeFull(t.finalTitle, t.finalBody, vm.linkViews(vm.linksOf(t.id)))) }
+                    scope.launch { copyText(ctx, "完整文案", Composer.composeFull(t.finalTitle, t.finalBody, vm.linkViews(vm.linksOf(t.id)), com.scarlett.geekradar.core.Tags.fromJson(t.tagsJson))) }
                 })
                 DropdownMenuItem(text = { Text("复制链接") }, onClick = {
                     menu = false
